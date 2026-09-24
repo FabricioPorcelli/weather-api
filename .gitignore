@@ -1,0 +1,21 @@
+# Entornos virtuales
+.venv/
+.conda/
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Herramientas
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Editores
+.vscode/
+.idea/
+
+# Plan
+PLAN.md
