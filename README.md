@@ -10,13 +10,13 @@ normaliza la respuesta a un contrato propio y la sirve con caché en Redis para 
 - [x] API base con FastAPI, validación con Pydantic y documentación automática
 - [x] Integración con Visual Crossing (`httpx`) con manejo de errores y timeouts
 - [x] Caché con Redis con TTL y degradación si Redis no está disponible
-- [ ] Rate limiting
+- [x] Rate limiting por IP con slowapi (Redis + fallback en memoria)
 - [ ] Tests automatizados
 - [ ] Dockerfile de la aplicación
 
 ## Stack
 
-Python 3.13 · FastAPI · Uvicorn · Pydantic · httpx · Redis (Docker) · pytest (próximamente)
+Python 3.13 · FastAPI · Uvicorn · Pydantic · httpx · Redis (Docker) · slowapi · pytest (próximamente)
 
 ## Endpoint
 
