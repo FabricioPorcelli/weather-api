@@ -1,3 +1,10 @@
+"""Lógica de negocio del recurso clima.
+
+Orquesta la caché y el proveedor externo (Visual Crossing), y traduce la
+respuesta del proveedor a nuestro contrato (WeatherResponse). No conoce
+FastAPI ni códigos HTTP: de eso se encarga la capa de routers.
+"""
+
 import logging
 from datetime import datetime, timezone
 from urllib.parse import quote
@@ -14,22 +21,32 @@ CACHE_KEY_PREFIX = "weather"
 
 
 class CityNotFoundError(Exception):
-    pass
+    """El proveedor no reconoce la ciudad consultada."""
 
 
 class UpstreamError(Exception):
-    pass
+    """El proveedor falló o devolvió una respuesta inesperada."""
 
 
 class UpstreamTimeoutError(UpstreamError):
-    pass
+    """El proveedor no respondió dentro del timeout configurado."""
 
 
 def _cache_key(city: str) -> str:
+    """Normaliza la ciudad para que 'Madrid', 'madrid' y 'MADRID' compartan caché."""
     return f"{CACHE_KEY_PREFIX}:{city.strip().lower()}"
 
 
 async def get_weather(city: str) -> tuple[WeatherResponse, bool]:
+    """Devuelve el clima de una ciudad aplicando el patrón cache-aside.
+
+    Busca primero en Redis; si no está, consulta al proveedor, guarda el
+    resultado con TTL y lo devuelve.
+
+    Returns:
+        Tupla (clima, from_cache). El booleano indica si la respuesta salió de
+        Redis y se usa para informar el header X-Cache.
+    """
     settings = get_settings()
     key = _cache_key(city)
 
@@ -45,6 +62,13 @@ async def get_weather(city: str) -> tuple[WeatherResponse, bool]:
 
 
 async def fetch_weather(city: str) -> WeatherResponse:
+    """Consulta Visual Crossing y mapea su respuesta a WeatherResponse.
+
+    Raises:
+        CityNotFoundError: el proveedor no reconoce la ciudad.
+        UpstreamTimeoutError: se superó upstream_timeout_seconds.
+        UpstreamError: error de red u otra respuesta no exitosa.
+    """
     settings = get_settings()
     url = f"{settings.weather_api_base_url}/{quote(city)}"
     params = {
@@ -57,6 +81,7 @@ async def fetch_weather(city: str) -> WeatherResponse:
     try:
         async with httpx.AsyncClient(timeout=settings.upstream_timeout_seconds) as client:
             response = await client.get(url, params=params)
+    # TimeoutException hereda de HTTPError: debe capturarse primero.
     except httpx.TimeoutException as exc:
         raise UpstreamTimeoutError(f"Timeout consultando el clima de {city}") from exc
     except httpx.HTTPError as exc:
@@ -78,10 +103,12 @@ async def fetch_weather(city: str) -> WeatherResponse:
         location=data.get("resolvedAddress", city.title()),
         temperature_c=current["temp"],
         feels_like_c=current["feelslike"],
+        # El proveedor devuelve decimales (56.4); nuestro contrato la define entera.
         humidity=round(current["humidity"]),
         conditions=current.get("conditions", ""),
         wind_speed_kmh=current["windspeed"],
         precipitation_mm=current.get("precip") or 0.0,
+        # datetimeEpoch son segundos Unix; el contrato usa ISO 8601 en UTC.
         updated_at=datetime.fromtimestamp(
             current["datetimeEpoch"], tz=timezone.utc
         ).isoformat(),

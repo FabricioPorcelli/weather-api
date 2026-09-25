@@ -1,3 +1,9 @@
+"""Punto de entrada de la aplicación.
+
+Crea la instancia de FastAPI, registra el rate limiter y monta los routers.
+Se ejecuta con: uvicorn app.main:app
+"""
+
 from fastapi import FastAPI
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
@@ -11,6 +17,7 @@ app = FastAPI(
     version="0.1.0",
 )
 
+# slowapi busca el limiter en app.state y usa este handler para responder 429.
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
