@@ -13,6 +13,7 @@ class Settings(BaseSettings):
         "https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/timeline"
     )
     upstream_timeout_seconds: float = 10.0
+    rate_limit: str = "10/minute"
 
 
 @lru_cache

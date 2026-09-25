@@ -1,7 +1,8 @@
 from typing import Annotated
 
-from fastapi import APIRouter, HTTPException, Path, Response
+from fastapi import APIRouter, HTTPException, Path, Request, Response
 
+from app.limiter import RATE_LIMIT, limiter
 from app.models import WeatherResponse
 from app.services import weather as weather_service
 
@@ -9,7 +10,9 @@ router = APIRouter(prefix="/weather", tags=["weather"])
 
 
 @router.get("/{city}")
+@limiter.limit(RATE_LIMIT)
 async def get_weather(
+    request: Request,
     response: Response,
     city: Annotated[
         str,
