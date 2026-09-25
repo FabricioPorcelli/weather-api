@@ -1,20 +1,16 @@
 from typing import Annotated
 
-from fastapi import APIRouter, HTTPException, Path
+from fastapi import APIRouter, HTTPException, Path, Response
 
 from app.models import WeatherResponse
-from app.services.weather import (
-    CityNotFoundError,
-    UpstreamError,
-    UpstreamTimeoutError,
-    fetch_weather,
-)
+from app.services import weather as weather_service
 
 router = APIRouter(prefix="/weather", tags=["weather"])
 
 
 @router.get("/{city}")
 async def get_weather(
+    response: Response,
     city: Annotated[
         str,
         Path(
@@ -25,14 +21,17 @@ async def get_weather(
     ],
 ) -> WeatherResponse:
     try:
-        return await fetch_weather(city)
-    except CityNotFoundError:
+        weather, from_cache = await weather_service.get_weather(city)
+    except weather_service.CityNotFoundError:
         raise HTTPException(status_code=404, detail=f"No se encontró la ciudad: {city}")
-    except UpstreamTimeoutError:
+    except weather_service.UpstreamTimeoutError:
         raise HTTPException(
             status_code=504, detail="El proveedor del clima no respondió a tiempo"
         )
-    except UpstreamError:
+    except weather_service.UpstreamError:
         raise HTTPException(
             status_code=502, detail="El proveedor del clima no está disponible"
         )
+
+    response.headers["X-Cache"] = "HIT" if from_cache else "MISS"
+    return weather
