@@ -1,4 +1,18 @@
 services:
+  api:
+    build: .
+    container_name: weather-api
+    ports:
+      - "8000:8000"
+    env_file: .env
+    environment:
+      # Dentro de la red de Compose, cada servicio se resuelve por su nombre.
+      # "localhost" apuntaría al propio contenedor de la API, no a Redis.
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      redis:
+        condition: service_healthy
+
   redis:
     image: redis:7-alpine
     container_name: weather-api-redis

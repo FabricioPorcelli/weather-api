@@ -1,0 +1,17 @@
+# Archivos que nunca deben copiarse a la imagen: peso, ruido o secretos.
+.git
+.gitignore
+.env
+.venv
+.conda
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.vscode/
+.idea/
+tests/
+requirements-dev.txt
+pytest.ini
+PLAN.md
+README.md
