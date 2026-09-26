@@ -11,12 +11,12 @@ normaliza la respuesta a un contrato propio y la sirve con caché en Redis para 
 - [x] Integración con Visual Crossing (`httpx`) con manejo de errores y timeouts
 - [x] Caché con Redis con TTL y degradación si Redis no está disponible
 - [x] Rate limiting por IP con slowapi (Redis + fallback en memoria)
-- [ ] Tests automatizados
+- [x] Tests automatizados (11 tests, sin red ni Redis reales)
 - [ ] Dockerfile de la aplicación
 
 ## Stack
 
-Python 3.13 · FastAPI · Uvicorn · Pydantic · httpx · Redis (Docker) · slowapi · pytest (próximamente)
+Python 3.13 · FastAPI · Uvicorn · Pydantic · httpx · Redis (Docker) · slowapi · pytest
 
 ## Endpoint
 
@@ -58,6 +58,16 @@ cp .env.example .env          # completar WEATHER_API_KEY
 docker compose up -d          # levanta Redis
 uvicorn app.main:app --reload # http://localhost:8000/docs
 ```
+
+## Tests
+
+```bash
+python -m pip install -r requirements-dev.txt
+pytest -v
+```
+
+Los tests usan `respx` (mock del proveedor), `fakeredis` (caché en memoria) y
+`TestClient`: corren sin red y sin Docker.
 
 ## Estructura
 
