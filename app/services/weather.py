@@ -1,29 +1,42 @@
 """Lógica de negocio del recurso clima.
 
 Orquesta la caché y el proveedor externo (Visual Crossing), y traduce la
-respuesta del proveedor a los contratos propios (WeatherResponse y
-ForecastResponse). No conoce FastAPI ni códigos HTTP: de eso se encargan los
-routers y los exception handlers de app/errors.py.
+respuesta del proveedor a los contratos propios (WeatherResponse,
+ForecastResponse y HistoricalResponse). No conoce FastAPI ni códigos HTTP: de
+eso se encargan los routers y los exception handlers de app/errors.py.
 """
 
 import logging
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from urllib.parse import quote
 
 import httpx
 
 from app.config import get_settings
-from app.models import DailyForecast, ForecastResponse, WeatherResponse
+from app.models import (
+    DailyForecast,
+    ForecastResponse,
+    HistoricalResponse,
+    WeatherResponse,
+)
 from app.services.cache import get_json, set_json
 
 logger = logging.getLogger(__name__)
 
 CURRENT_CACHE_PREFIX = "weather"
 FORECAST_CACHE_PREFIX = "forecast"
+HISTORY_CACHE_PREFIX = "history"
+
+MIN_HISTORY_DATE = date(1970, 1, 1)
+MAX_HISTORY_DAYS = 366
 
 
 class CityNotFoundError(Exception):
     """El proveedor no reconoce la ubicación consultada."""
+
+
+class InvalidDateRangeError(Exception):
+    """El rango de fechas del histórico no es válido."""
 
 
 class UpstreamError(Exception):
@@ -54,8 +67,36 @@ def _cache_key(prefix: str, location: str) -> str:
     return f"{prefix}:{location.strip().lower()}"
 
 
-async def _request_upstream(location: str, include: str) -> dict:
+def _validate_history_range(start: date, end: date) -> None:
+    """Valida el rango antes de gastar una consulta al proveedor.
+
+    Los límites existen para evitar pedidos inválidos o desmesurados: el costo
+    de una consulta crece con la cantidad de días devueltos.
+    """
+    if start > end:
+        raise InvalidDateRangeError("start no puede ser posterior a end")
+    if start < MIN_HISTORY_DATE:
+        raise InvalidDateRangeError(
+            f"start no puede ser anterior a {MIN_HISTORY_DATE.isoformat()}"
+        )
+    if end > date.today():
+        raise InvalidDateRangeError("el histórico solo admite fechas hasta hoy")
+    if (end - start).days + 1 > MAX_HISTORY_DAYS:
+        raise InvalidDateRangeError(
+            f"el rango no puede superar los {MAX_HISTORY_DAYS} días"
+        )
+
+
+async def _request_upstream(
+    location: str,
+    include: str,
+    start: date | None = None,
+    end: date | None = None,
+) -> dict:
     """Consulta Visual Crossing y devuelve el JSON crudo.
+
+    Con start y end arma la variante con rango de fechas de la ruta
+    (/timeline/{location}/{start}/{end}); sin ellos, consulta el día actual.
 
     Raises:
         CityNotFoundError: el proveedor no reconoce la ubicación.
@@ -63,7 +104,10 @@ async def _request_upstream(location: str, include: str) -> dict:
         UpstreamError: error de red u otra respuesta no exitosa.
     """
     settings = get_settings()
-    url = f"{settings.weather_api_base_url}/{quote(location, safe=',')}"
+    path = quote(location, safe=",")
+    if start is not None and end is not None:
+        path = f"{path}/{start.isoformat()}/{end.isoformat()}"
+    url = f"{settings.weather_api_base_url}/{path}"
     params = {
         "key": settings.weather_api_key,
         "unitGroup": "metric",
@@ -113,33 +157,48 @@ def _to_weather_response(data: dict, fallback_location: str) -> WeatherResponse:
     )
 
 
+def _to_daily_forecast(day: dict) -> DailyForecast:
+    """Mapea un día del proveedor, sirva para pronóstico u observación histórica."""
+    # precipprob solo existe en pronóstico: en histórico queda en None.
+    probability = day.get("precipprob")
+    return DailyForecast(
+        date=day["datetime"],
+        temp_max_c=day["tempmax"],
+        temp_min_c=day["tempmin"],
+        temp_c=day["temp"],
+        precipitation_mm=day.get("precip") or 0.0,
+        precipitation_probability=(
+            round(probability) if probability is not None else None
+        ),
+        conditions=day.get("conditions", ""),
+        wind_speed_kmh=day["windspeed"],
+        sunrise=day.get("sunrise", ""),
+        sunset=day.get("sunset", ""),
+    )
+
+
+def _daily_records(data: dict, fallback_location: str) -> list[DailyForecast]:
+    daily = data.get("days")
+    if not daily:
+        raise UpstreamError(f"Respuesta sin datos diarios para {fallback_location}")
+    return [_to_daily_forecast(day) for day in daily]
+
+
 def _to_forecast_response(
     data: dict, fallback_location: str, days: int
 ) -> ForecastResponse:
-    """Mapea la lista 'days' del proveedor y recorta a los días pedidos."""
-    daily = data.get("days")
-    if not daily:
-        raise UpstreamError(
-            f"Respuesta sin pronóstico diario para {fallback_location}"
-        )
-
+    """Recorta los días del proveedor a la cantidad pedida."""
     return ForecastResponse(
         location=data.get("resolvedAddress", fallback_location),
-        days=[
-            DailyForecast(
-                date=day["datetime"],
-                temp_max_c=day["tempmax"],
-                temp_min_c=day["tempmin"],
-                temp_c=day["temp"],
-                precipitation_mm=day.get("precip") or 0.0,
-                precipitation_probability=round(day.get("precipprob") or 0),
-                conditions=day.get("conditions", ""),
-                wind_speed_kmh=day["windspeed"],
-                sunrise=day.get("sunrise", ""),
-                sunset=day.get("sunset", ""),
-            )
-            for day in daily[:days]
-        ],
+        days=_daily_records(data, fallback_location)[:days],
+    )
+
+
+def _to_history_response(data: dict, fallback_location: str) -> HistoricalResponse:
+    """Usa todos los días devueltos para el rango pedido."""
+    return HistoricalResponse(
+        location=data.get("resolvedAddress", fallback_location),
+        days=_daily_records(data, fallback_location),
     )
 
 
@@ -194,3 +253,40 @@ async def get_forecast(
         key, forecast.model_dump(mode="json"), settings.forecast_cache_ttl_seconds
     )
     return forecast, False
+
+
+async def get_history(
+    start: date,
+    end: date,
+    city: str | None = None,
+    lat: float | None = None,
+    lon: float | None = None,
+) -> tuple[HistoricalResponse, bool]:
+    """Histórico diario con patrón cache-aside (por ciudad o por coordenadas).
+
+    El pasado no cambia, así que un rango cerrado se cachea con TTL largo; si
+    incluye el día de hoy (dato todavía en curso), se usa el TTL del pronóstico.
+    """
+    _validate_history_range(start, end)
+    settings = get_settings()
+    location = _resolve_location(city, lat, lon)
+    key = (
+        f"{_cache_key(HISTORY_CACHE_PREFIX, location)}"
+        f":{start.isoformat()}:{end.isoformat()}"
+    )
+
+    cached = await get_json(key)
+    if cached is not None:
+        logger.info("Cache HIT %s", key)
+        return HistoricalResponse.model_validate(cached), True
+
+    logger.info("Cache MISS %s", key)
+    data = await _request_upstream(location, include="days", start=start, end=end)
+    history = _to_history_response(data, location)
+    ttl = (
+        settings.history_cache_ttl_seconds
+        if end < date.today()
+        else settings.forecast_cache_ttl_seconds
+    )
+    await set_json(key, history.model_dump(mode="json"), ttl)
+    return history, False

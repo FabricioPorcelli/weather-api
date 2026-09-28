@@ -26,6 +26,12 @@ async def _upstream_timeout(
     return _error_response(504, "El proveedor del clima no respondió a tiempo")
 
 
+async def _invalid_date_range(
+    request: Request, exc: weather_service.InvalidDateRangeError
+) -> JSONResponse:
+    return _error_response(422, str(exc))
+
+
 async def _upstream_error(
     request: Request, exc: weather_service.UpstreamError
 ) -> JSONResponse:
@@ -41,3 +47,4 @@ def register_exception_handlers(app: FastAPI) -> None:
     app.add_exception_handler(weather_service.CityNotFoundError, _city_not_found)
     app.add_exception_handler(weather_service.UpstreamTimeoutError, _upstream_timeout)
     app.add_exception_handler(weather_service.UpstreamError, _upstream_error)
+    app.add_exception_handler(weather_service.InvalidDateRangeError, _invalid_date_range)

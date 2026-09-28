@@ -33,8 +33,11 @@ class DailyForecast(BaseModel):
     precipitation_mm: float = Field(
         default=0.0, ge=0, description="Precipitación prevista en milímetros"
     )
-    precipitation_probability: int = Field(
-        ge=0, le=100, description="Probabilidad de precipitación en porcentaje"
+    precipitation_probability: int | None = Field(
+        default=None,
+        ge=0,
+        le=100,
+        description="Probabilidad de precipitación (solo pronóstico; null en histórico)",
     )
     conditions: str = Field(description="Descripción textual del estado del cielo")
     wind_speed_kmh: float = Field(ge=0, description="Velocidad máxima del viento en km/h")
@@ -48,4 +51,13 @@ class ForecastResponse(BaseModel):
     location: str = Field(description="Ciudad o punto resuelto por el proveedor")
     days: list[DailyForecast] = Field(
         description="Días de pronóstico, del más cercano al más lejano"
+    )
+
+
+class HistoricalResponse(BaseModel):
+    """Histórico diario de una ciudad o punto en un rango de fechas."""
+
+    location: str = Field(description="Ciudad o punto resuelto por el proveedor")
+    days: list[DailyForecast] = Field(
+        description="Días del rango solicitado, en orden cronológico"
     )

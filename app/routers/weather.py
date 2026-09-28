@@ -4,12 +4,13 @@ Recibe el request, delega en el service y solo se ocupa del header X-Cache:
 la traducción de excepciones de dominio a códigos HTTP vive en app/errors.py.
 """
 
+from datetime import date
 from typing import Annotated
 
 from fastapi import APIRouter, Path, Query, Request, Response
 
 from app.limiter import RATE_LIMIT, limiter
-from app.models import ForecastResponse, WeatherResponse
+from app.models import ForecastResponse, HistoricalResponse, WeatherResponse
 from app.services import weather as weather_service
 
 router = APIRouter(prefix="/v1", tags=["weather"])
@@ -29,6 +30,12 @@ Longitude = Annotated[
     float, Path(ge=-180, le=180, description="Longitud en grados decimales")
 ]
 Days = Annotated[int, Query(ge=1, le=15, description="Cantidad de días de pronóstico")]
+StartDate = Annotated[
+    date, Query(description="Fecha inicial del histórico (formato YYYY-MM-DD)")
+]
+EndDate = Annotated[
+    date, Query(description="Fecha final del histórico (formato YYYY-MM-DD)")
+]
 
 
 def _cache_header(response: Response, from_cache: bool) -> None:
@@ -89,3 +96,36 @@ async def get_forecast_by_coords(
     forecast, from_cache = await weather_service.get_forecast(days, lat=lat, lon=lon)
     _cache_header(response, from_cache)
     return forecast
+
+
+@router.get("/history/{city}")
+@limiter.limit(RATE_LIMIT)
+async def get_history_by_city(
+    request: Request,
+    response: Response,
+    city: City,
+    start: StartDate,
+    end: EndDate,
+) -> HistoricalResponse:
+    """Devuelve el histórico diario de una ciudad en un rango de fechas."""
+    history, from_cache = await weather_service.get_history(start, end, city=city)
+    _cache_header(response, from_cache)
+    return history
+
+
+@router.get("/history/coords/{lat}/{lon}")
+@limiter.limit(RATE_LIMIT)
+async def get_history_by_coords(
+    request: Request,
+    response: Response,
+    lat: Latitude,
+    lon: Longitude,
+    start: StartDate,
+    end: EndDate,
+) -> HistoricalResponse:
+    """Devuelve el histórico diario para un par de coordenadas."""
+    history, from_cache = await weather_service.get_history(
+        start, end, lat=lat, lon=lon
+    )
+    _cache_header(response, from_cache)
+    return history

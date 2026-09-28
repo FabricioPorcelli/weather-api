@@ -5,7 +5,7 @@ mockeado: se verifica el contrato de respuesta, el header X-Cache y la
 traducción de errores a códigos HTTP (app/errors.py).
 """
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import httpx
 from redis.exceptions import RedisError
@@ -47,6 +47,30 @@ def _forecast_day(index: int) -> dict:
 FORECAST_PAYLOAD = {
     "resolvedAddress": "Madrid, Spain",
     "days": [_forecast_day(index) for index in range(7)],
+}
+
+HISTORY_PATH = f"{CITY_PATH}/2024-10-01/2024-10-03"
+COORDS_HISTORY_PATH = f"{COORDS_PATH}/2024-10-01/2024-10-03"
+
+
+def _historical_day(index: int) -> dict:
+    return {
+        "datetime": f"2024-10-{1 + index:02d}",
+        "tempmax": 20.0 + index,
+        "tempmin": 10.0 + index,
+        "temp": 15.0 + index,
+        "precip": 0.0,
+        "precipprob": None,
+        "conditions": "Despejado",
+        "windspeed": 8.0 + index,
+        "sunrise": "07:20:00",
+        "sunset": "18:50:00",
+    }
+
+
+HISTORICAL_PAYLOAD = {
+    "resolvedAddress": "Madrid, Spain",
+    "days": [_historical_day(index) for index in range(3)],
 }
 
 
@@ -205,3 +229,96 @@ def test_works_when_redis_is_down(client, mock_weather_api, monkeypatch):
 
     assert response.status_code == 200
     assert response.headers["X-Cache"] == "MISS"
+
+
+def test_history_by_city_ok_and_cached(client, mock_weather_api):
+    route = mock_weather_api.get(HISTORY_PATH).mock(
+        return_value=httpx.Response(200, json=HISTORICAL_PAYLOAD)
+    )
+
+    first = client.get("/v1/history/Madrid?start=2024-10-01&end=2024-10-03")
+    second = client.get("/v1/history/Madrid?start=2024-10-01&end=2024-10-03")
+
+    assert first.status_code == 200
+    assert first.headers["X-Cache"] == "MISS"
+    assert second.headers["X-Cache"] == "HIT"
+    assert route.call_count == 1
+    body = first.json()
+    assert body["location"] == "Madrid, Spain"
+    assert len(body["days"]) == 3
+    assert body["days"][0]["date"] == "2024-10-01"
+    assert body["days"][0]["precipitation_probability"] is None
+
+
+def test_history_by_coords_ok(client, mock_weather_api):
+    mock_weather_api.get(COORDS_HISTORY_PATH).mock(
+        return_value=httpx.Response(200, json=HISTORICAL_PAYLOAD)
+    )
+
+    response = client.get(
+        "/v1/history/coords/40.42/-3.70?start=2024-10-01&end=2024-10-03"
+    )
+
+    assert response.status_code == 200
+    assert len(response.json()["days"]) == 3
+
+
+async def test_history_ttl_is_long_for_past_ranges(client, fake_redis, mock_weather_api):
+    mock_weather_api.get(HISTORY_PATH).mock(
+        return_value=httpx.Response(200, json=HISTORICAL_PAYLOAD)
+    )
+
+    client.get("/v1/history/Madrid?start=2024-10-01&end=2024-10-03")
+
+    ttl = await fake_redis.ttl("history:madrid:2024-10-01:2024-10-03")
+    assert ttl > 3600
+
+
+async def test_history_ttl_is_short_when_range_includes_today(
+    client, fake_redis, mock_weather_api
+):
+    today = date.today()
+    start = today - timedelta(days=2)
+    path = f"{CITY_PATH}/{start.isoformat()}/{today.isoformat()}"
+    key = f"history:madrid:{start.isoformat()}:{today.isoformat()}"
+    mock_weather_api.get(path).mock(
+        return_value=httpx.Response(200, json=HISTORICAL_PAYLOAD)
+    )
+
+    response = client.get(
+        f"/v1/history/Madrid?start={start.isoformat()}&end={today.isoformat()}"
+    )
+
+    assert response.status_code == 200
+    ttl = await fake_redis.ttl(key)
+    assert 0 < ttl <= 3600
+
+
+def test_history_start_after_end_returns_422(client):
+    response = client.get("/v1/history/Madrid?start=2024-10-10&end=2024-10-01")
+
+    assert response.status_code == 422
+
+
+def test_history_future_end_returns_422(client):
+    response = client.get("/v1/history/Madrid?start=2024-10-01&end=2030-01-01")
+
+    assert response.status_code == 422
+
+
+def test_history_range_too_long_returns_422(client):
+    response = client.get("/v1/history/Madrid?start=2020-01-01&end=2024-01-01")
+
+    assert response.status_code == 422
+
+
+def test_history_invalid_date_returns_422(client):
+    response = client.get("/v1/history/Madrid?start=2024-13-01&end=2024-12-01")
+
+    assert response.status_code == 422
+
+
+def test_history_missing_dates_returns_422(client):
+    response = client.get("/v1/history/Madrid")
+
+    assert response.status_code == 422

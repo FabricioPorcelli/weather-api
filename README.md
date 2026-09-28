@@ -9,12 +9,12 @@ normaliza la respuesta a un contrato propio y la sirve con caché en Redis.
 
 ## Estado
 
-- [x] API v1: clima actual y pronóstico (por ciudad o coordenadas)
+- [x] API v1: clima actual, pronóstico e histórico (por ciudad o coordenadas)
 - [x] Validación con Pydantic y documentación automática en `/docs`
 - [x] Integración con Visual Crossing (`httpx`) con manejo de errores y timeouts
-- [x] Caché con Redis y TTL por tipo de dato (12 h actual / 1 h pronóstico)
+- [x] Caché con Redis y TTL por tipo de dato (12 h actual / 1 h pronóstico / 7 días histórico)
 - [x] Rate limiting por IP con slowapi (Redis + fallback en memoria)
-- [x] 17 tests sin red ni Redis reales (respx + fakeredis)
+- [x] 26 tests sin red ni Redis reales (respx + fakeredis)
 - [x] Docker Compose: API + Redis con un solo comando
 - [ ] Autenticación por API key y deploy (futuro)
 
@@ -30,11 +30,14 @@ Python 3.13 · FastAPI · Uvicorn · Pydantic · httpx · Redis · slowapi · py
 | GET | `/v1/weather/coords/{lat}/{lon}` | Clima actual por coordenadas |
 | GET | `/v1/forecast/{city}?days=5` | Pronóstico diario (1 a 15 días) |
 | GET | `/v1/forecast/coords/{lat}/{lon}?days=5` | Pronóstico por coordenadas |
+| GET | `/v1/history/{city}?start=2024-10-01&end=2024-10-10` | Histórico diario por rango (máx. 366 días) |
+| GET | `/v1/history/coords/{lat}/{lon}?start=...&end=...` | Histórico por coordenadas |
 
 ```bash
 curl -i "http://localhost:8000/v1/weather/Madrid"
 curl -i "http://localhost:8000/v1/weather/coords/-34.60/-58.38"
 curl -i "http://localhost:8000/v1/forecast/Madrid?days=5"
+curl -i "http://localhost:8000/v1/history/Madrid?start=2024-10-01&end=2024-10-10"
 ```
 
 Clima actual:
@@ -75,6 +78,11 @@ Pronóstico:
 ```
 
 Todas las respuestas incluyen `X-Cache: HIT | MISS` para saber si se resolvieron desde Redis.
+
+El histórico devuelve el mismo formato de días que el pronóstico, con
+`precipitation_probability` en `null` (el proveedor solo la calcula para pronóstico).
+Reglas del rango: `start <= end`, entre 1970-01-01 y hoy, máximo 366 días por consulta.
+Un rango pasado se cachea 7 días; si incluye el día de hoy, 1 hora.
 
 Errores: `404` ubicación no encontrada, `422` parámetros inválidos, `429` rate limit,
 `502` proveedor no disponible, `504` timeout del proveedor.
