@@ -17,4 +17,4 @@ COPY app ./app
 EXPOSE 8000
 
 # 0.0.0.0 es obligatorio: dentro del contenedor, 127.0.0.1 no es accesible desde afuera.
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --proxy-headers --forwarded-allow-ips='*' --root-path \"${ROOT_PATH:-}\""]

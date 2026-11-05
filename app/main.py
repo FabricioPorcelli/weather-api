@@ -30,6 +30,13 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 register_exception_handlers(app)
 
+
+@app.get("/health")
+async def health() -> dict[str, str]:
+    """Indica que la aplicación está viva, sin consultar servicios externos."""
+    return {"status": "ok"}
+
+
 # CORS solo si hay orígenes configurados; expone X-Cache para clientes web.
 settings = get_settings()
 if settings.cors_origins:
