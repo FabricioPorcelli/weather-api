@@ -8,7 +8,7 @@ services:
     environment:
       # Dentro de la red de Compose, cada servicio se resuelve por su nombre.
       # "localhost" apuntaría al propio contenedor de la API, no a Redis.
-      REDIS_URL: redis://redis:6379/0
+      REDIS_URL: ${REDIS_URL}
     depends_on:
       redis:
         condition: service_healthy
