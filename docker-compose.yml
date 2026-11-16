@@ -2,8 +2,8 @@ services:
   api:
     build: .
     container_name: weather-api
-    ports:
-      - "8000:8000"
+    expose:
+      - "8000"
     env_file: .env
     environment:
       # Redis es externo (Coolify o un servicio aparte): se configura con REDIS_URL.
