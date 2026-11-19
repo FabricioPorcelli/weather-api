@@ -1,20 +1,21 @@
 # Weather API Wrapper
 
-API REST en Python que consulta el clima actual y el pronóstico de una ciudad o de
-un par de coordenadas a [Visual Crossing](https://www.visualcrossing.com/weather-api),
-normaliza la respuesta a un contrato propio y la sirve con caché en Redis.
+API REST en Python que consulta el clima actual y el pronóstico diario y horario
+de una ciudad o de un par de coordenadas a
+[Visual Crossing](https://www.visualcrossing.com/weather-api), normaliza la
+respuesta a un contrato propio y la sirve con caché en Redis.
 
 > Proyecto en construcción, desarrollado por fases a partir de
 > [este proyecto de roadmap.sh](https://roadmap.sh/projects/weather-api-wrapper-service).
 
 ## Estado
 
-- [x] API v1: clima actual, pronóstico e histórico (por ciudad o coordenadas)
+- [x] API v1: clima actual, pronóstico diario, pronóstico horario e histórico
 - [x] Validación con Pydantic y documentación automática en `/docs`
 - [x] Integración con Visual Crossing (`httpx`) con manejo de errores y timeouts
-- [x] Caché con Redis y TTL por tipo de dato (12 h actual / 1 h pronóstico / 7 días histórico)
+- [x] Caché con Redis y TTL por tipo de dato (12 h actual / 1 h diario / 30 min horario / 7 días histórico)
 - [x] Rate limiting por IP con slowapi (Redis + fallback en memoria)
-- [x] 26 tests sin red ni Redis reales (respx + fakeredis)
+- [x] 31 tests sin red ni Redis reales (respx + fakeredis)
 - [x] Docker Compose: API + Redis con un solo comando
 - [ ] Autenticación por API key y deploy (futuro)
 
@@ -30,6 +31,8 @@ Python 3.13 · FastAPI · Uvicorn · Pydantic · httpx · Redis · slowapi · py
 | GET | `/v1/weather/coords/{lat}/{lon}` | Clima actual por coordenadas |
 | GET | `/v1/forecast/{city}?days=5` | Pronóstico diario (1 a 15 días) |
 | GET | `/v1/forecast/coords/{lat}/{lon}?days=5` | Pronóstico por coordenadas |
+| GET | `/v1/hourly/{city}?hours=24` | Pronóstico horario (1 a 48 horas) |
+| GET | `/v1/hourly/coords/{lat}/{lon}?hours=24` | Pronóstico horario por coordenadas |
 | GET | `/v1/history/{city}?start=2024-10-01&end=2024-10-10` | Histórico diario por rango (máx. 366 días) |
 | GET | `/v1/history/coords/{lat}/{lon}?start=...&end=...` | Histórico por coordenadas |
 
@@ -37,6 +40,7 @@ Python 3.13 · FastAPI · Uvicorn · Pydantic · httpx · Redis · slowapi · py
 curl -i "http://localhost:8000/v1/weather/Madrid"
 curl -i "http://localhost:8000/v1/weather/coords/-34.60/-58.38"
 curl -i "http://localhost:8000/v1/forecast/Madrid?days=5"
+curl -i "http://localhost:8000/v1/hourly/Madrid?hours=24"
 curl -i "http://localhost:8000/v1/history/Madrid?start=2024-10-01&end=2024-10-10"
 ```
 
@@ -72,6 +76,27 @@ Pronóstico:
       "wind_speed_kmh": 12.0,
       "sunrise": "08:05:00",
       "sunset": "20:05:00"
+    }
+  ]
+}
+```
+
+Pronóstico horario:
+
+```json
+{
+  "location": "Madrid, Spain",
+  "hours": [
+    {
+      "datetime": "2026-11-19T14:00:00",
+      "temperature_c": 18.4,
+      "feels_like_c": 17.9,
+      "humidity": 62,
+      "precipitation_mm": 0.0,
+      "precipitation_probability": 10,
+      "conditions": "Parcialmente nublado",
+      "wind_speed_kmh": 11.2,
+      "icon": "partly-cloudy-day"
     }
   ]
 }

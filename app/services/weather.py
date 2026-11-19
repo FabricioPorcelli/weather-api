@@ -7,7 +7,7 @@ eso se encargan los routers y los exception handlers de app/errors.py.
 """
 
 import logging
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from urllib.parse import quote
 
 import httpx
@@ -17,6 +17,8 @@ from app.models import (
     DailyForecast,
     ForecastResponse,
     HistoricalResponse,
+    HourlyForecast,
+    HourlyResponse,
     WeatherResponse,
 )
 from app.services.cache import get_json, set_json
@@ -25,6 +27,7 @@ logger = logging.getLogger(__name__)
 
 CURRENT_CACHE_PREFIX = "weather"
 FORECAST_CACHE_PREFIX = "forecast"
+HOURLY_CACHE_PREFIX = "hourly"
 HISTORY_CACHE_PREFIX = "history"
 
 MIN_HISTORY_DATE = date(1970, 1, 1)
@@ -184,6 +187,70 @@ def _daily_records(data: dict, fallback_location: str) -> list[DailyForecast]:
     return [_to_daily_forecast(day) for day in daily]
 
 
+def _to_hourly_forecast(day_date: str, hour: dict) -> HourlyForecast:
+    """Mapea una hora del proveedor al contrato público."""
+    probability = hour.get("precipprob")
+    hour_time = hour.get("datetime", "")
+    timestamp = (
+        f"{day_date}T{hour_time}"
+        if hour_time and "T" not in hour_time
+        else hour_time or day_date
+    )
+    return HourlyForecast(
+        datetime=timestamp,
+        temperature_c=hour["temp"],
+        feels_like_c=hour["feelslike"],
+        humidity=round(hour["humidity"]),
+        precipitation_mm=hour.get("precip") or 0.0,
+        precipitation_probability=(
+            round(probability) if probability is not None else None
+        ),
+        conditions=hour.get("conditions", ""),
+        wind_speed_kmh=hour["windspeed"],
+        icon=hour.get("icon", ""),
+    )
+
+
+def _hourly_records(
+    data: dict, fallback_location: str, limit: int
+) -> list[HourlyForecast]:
+    """Aplana las horas de los días y devuelve desde la hora actual."""
+    days = data.get("days")
+    if not days:
+        raise UpstreamError(f"Respuesta sin datos horarios para {fallback_location}")
+
+    now = datetime.now(timezone.utc)
+    records: list[HourlyForecast] = []
+
+    for day in days:
+        day_date = day.get("datetime", "")
+        for hour in day.get("hours", []):
+            epoch = hour.get("datetimeEpoch")
+            if epoch is not None and datetime.fromtimestamp(
+                epoch, tz=timezone.utc
+            ) < now - timedelta(minutes=30):
+                continue
+            records.append(_to_hourly_forecast(day_date, hour))
+            if len(records) >= limit:
+                return records
+
+    if not records:
+        raise UpstreamError(
+            f"Respuesta sin horas futuras para {fallback_location}"
+        )
+    return records
+
+
+def _to_hourly_response(
+    data: dict, fallback_location: str, hours: int
+) -> HourlyResponse:
+    """Construye el contrato horario con la cantidad pedida."""
+    return HourlyResponse(
+        location=data.get("resolvedAddress", fallback_location),
+        hours=_hourly_records(data, fallback_location, hours),
+    )
+
+
 def _to_forecast_response(
     data: dict, fallback_location: str, days: int
 ) -> ForecastResponse:
@@ -253,6 +320,41 @@ async def get_forecast(
         key, forecast.model_dump(mode="json"), settings.forecast_cache_ttl_seconds
     )
     return forecast, False
+
+
+async def get_hourly(
+    hours: int,
+    city: str | None = None,
+    lat: float | None = None,
+    lon: float | None = None,
+) -> tuple[HourlyResponse, bool]:
+    """Pronóstico horario con caché corta (por ciudad o coordenadas).
+
+    Se piden días completos al proveedor y se recortan las horas futuras. Por
+    eso el rango incluye un día extra: si son las 23:00, las próximas 24 horas
+    cruzan dos fechas.
+    """
+    settings = get_settings()
+    location = _resolve_location(city, lat, lon)
+    key = f"{_cache_key(HOURLY_CACHE_PREFIX, location)}:{hours}"
+
+    cached = await get_json(key)
+    if cached is not None:
+        logger.info("Cache HIT %s", key)
+        return HourlyResponse.model_validate(cached), True
+
+    logger.info("Cache MISS %s", key)
+    days_needed = max(2, (hours + 23) // 24 + 1)
+    start = date.today()
+    end = start + timedelta(days=days_needed - 1)
+    data = await _request_upstream(
+        location, include="hours", start=start, end=end
+    )
+    hourly = _to_hourly_response(data, location, hours)
+    await set_json(
+        key, hourly.model_dump(mode="json"), settings.hourly_cache_ttl_seconds
+    )
+    return hourly, False
 
 
 async def get_history(

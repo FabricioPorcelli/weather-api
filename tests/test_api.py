@@ -49,6 +49,45 @@ FORECAST_PAYLOAD = {
     "days": [_forecast_day(index) for index in range(7)],
 }
 
+
+def _hourly_payload(hours: int = 72) -> dict:
+    """Genera horas futuras para que el filtro del service no las descarte."""
+    start = datetime.now(timezone.utc).replace(
+        minute=0, second=0, microsecond=0
+    ) + timedelta(hours=1)
+    days: dict[str, dict] = {}
+
+    for offset in range(hours):
+        moment = start + timedelta(hours=offset)
+        day_key = moment.date().isoformat()
+        day = days.setdefault(day_key, {"datetime": day_key, "hours": []})
+        day["hours"].append(
+            {
+                "datetime": moment.strftime("%H:%M:%S"),
+                "datetimeEpoch": int(moment.timestamp()),
+                "temp": 20.0 + offset % 5,
+                "feelslike": 19.5 + offset % 5,
+                "humidity": 60.5,
+                "precip": 0.0,
+                "precipprob": 10.0,
+                "conditions": "Parcialmente nublado",
+                "windspeed": 10.0,
+                "icon": "partly-cloudy-day",
+            }
+        )
+
+    return {
+        "resolvedAddress": "Madrid, Spain",
+        "days": list(days.values()),
+    }
+
+
+def _hourly_path(city_path: str = CITY_PATH, hours: int = 24) -> str:
+    days_needed = max(2, (hours + 23) // 24 + 1)
+    start = date.today()
+    end = start + timedelta(days=days_needed - 1)
+    return f"{city_path}/{start.isoformat()}/{end.isoformat()}"
+
 HISTORY_PATH = f"{CITY_PATH}/2024-10-01/2024-10-03"
 COORDS_HISTORY_PATH = f"{COORDS_PATH}/2024-10-01/2024-10-03"
 
@@ -164,6 +203,63 @@ def test_forecast_by_coords_ok(client, mock_weather_api):
 
     assert response.status_code == 200
     assert len(response.json()["days"]) == 3
+
+
+def test_hourly_by_city_ok(client, mock_weather_api):
+    path = _hourly_path(hours=24)
+    mock_weather_api.get(path).mock(
+        return_value=httpx.Response(200, json=_hourly_payload())
+    )
+
+    response = client.get("/v1/hourly/Madrid?hours=24")
+
+    assert response.status_code == 200
+    assert response.headers["X-Cache"] == "MISS"
+    body = response.json()
+    assert body["location"] == "Madrid, Spain"
+    assert len(body["hours"]) == 24
+    first = body["hours"][0]
+    assert first["temperature_c"] == 20.0
+    assert first["humidity"] == 60
+    assert first["precipitation_probability"] == 10
+    assert first["icon"] == "partly-cloudy-day"
+    assert "T" in first["datetime"]
+
+
+def test_hourly_by_coords_ok(client, mock_weather_api):
+    path = _hourly_path(COORDS_PATH, hours=12)
+    mock_weather_api.get(path).mock(
+        return_value=httpx.Response(200, json=_hourly_payload())
+    )
+
+    response = client.get("/v1/hourly/coords/40.42/-3.70?hours=12")
+
+    assert response.status_code == 200
+    assert len(response.json()["hours"]) == 12
+
+
+async def test_hourly_second_request_comes_from_cache(
+    client, fake_redis, mock_weather_api
+):
+    path = _hourly_path(hours=24)
+    route = mock_weather_api.get(path).mock(
+        return_value=httpx.Response(200, json=_hourly_payload())
+    )
+
+    first = client.get("/v1/hourly/Madrid?hours=24")
+    second = client.get("/v1/hourly/madrid?hours=24")
+
+    assert first.headers["X-Cache"] == "MISS"
+    assert second.headers["X-Cache"] == "HIT"
+    assert route.call_count == 1
+    ttl = await fake_redis.ttl("hourly:madrid:24")
+    assert 0 < ttl <= 1800
+
+
+def test_hourly_hours_out_of_range_returns_422(client):
+    response = client.get("/v1/hourly/Madrid?hours=99")
+
+    assert response.status_code == 422
 
 
 def test_forecast_days_out_of_range_returns_422(client):

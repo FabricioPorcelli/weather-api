@@ -10,7 +10,12 @@ from typing import Annotated
 from fastapi import APIRouter, Path, Query, Request, Response
 
 from app.limiter import RATE_LIMIT, limiter
-from app.models import ForecastResponse, HistoricalResponse, WeatherResponse
+from app.models import (
+    ForecastResponse,
+    HistoricalResponse,
+    HourlyResponse,
+    WeatherResponse,
+)
 from app.services import weather as weather_service
 
 router = APIRouter(prefix="/v1", tags=["weather"])
@@ -30,6 +35,9 @@ Longitude = Annotated[
     float, Path(ge=-180, le=180, description="Longitud en grados decimales")
 ]
 Days = Annotated[int, Query(ge=1, le=15, description="Cantidad de días de pronóstico")]
+Hours = Annotated[
+    int, Query(ge=1, le=48, description="Cantidad de horas de pronóstico")
+]
 StartDate = Annotated[
     date, Query(description="Fecha inicial del histórico (formato YYYY-MM-DD)")
 ]
@@ -96,6 +104,37 @@ async def get_forecast_by_coords(
     forecast, from_cache = await weather_service.get_forecast(days, lat=lat, lon=lon)
     _cache_header(response, from_cache)
     return forecast
+
+
+@router.get("/hourly/{city}")
+@limiter.limit(RATE_LIMIT)
+async def get_hourly_by_city(
+    request: Request,
+    response: Response,
+    city: City,
+    hours: Hours = 24,
+) -> HourlyResponse:
+    """Devuelve el pronóstico horario de una ciudad."""
+    hourly, from_cache = await weather_service.get_hourly(hours, city=city)
+    _cache_header(response, from_cache)
+    return hourly
+
+
+@router.get("/hourly/coords/{lat}/{lon}")
+@limiter.limit(RATE_LIMIT)
+async def get_hourly_by_coords(
+    request: Request,
+    response: Response,
+    lat: Latitude,
+    lon: Longitude,
+    hours: Hours = 24,
+) -> HourlyResponse:
+    """Devuelve el pronóstico horario para un par de coordenadas."""
+    hourly, from_cache = await weather_service.get_hourly(
+        hours, lat=lat, lon=lon
+    )
+    _cache_header(response, from_cache)
+    return hourly
 
 
 @router.get("/history/{city}")

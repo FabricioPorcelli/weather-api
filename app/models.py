@@ -45,12 +45,44 @@ class DailyForecast(BaseModel):
     sunset: str = Field(description="Hora local del atardecer")
 
 
+class HourlyForecast(BaseModel):
+    """Una hora del pronóstico."""
+
+    datetime: str = Field(
+        description="Fecha y hora local del pronóstico (formato ISO 8601)"
+    )
+    temperature_c: float = Field(description="Temperatura en grados Celsius")
+    feels_like_c: float = Field(description="Sensación térmica en grados Celsius")
+    humidity: int = Field(ge=0, le=100, description="Humedad relativa en porcentaje")
+    precipitation_mm: float = Field(
+        default=0.0, ge=0, description="Precipitación prevista en milímetros"
+    )
+    precipitation_probability: int | None = Field(
+        default=None,
+        ge=0,
+        le=100,
+        description="Probabilidad de precipitación",
+    )
+    conditions: str = Field(description="Descripción textual del estado del cielo")
+    wind_speed_kmh: float = Field(ge=0, description="Velocidad del viento en km/h")
+    icon: str = Field(default="", description="Código de ícono del proveedor")
+
+
 class ForecastResponse(BaseModel):
     """Pronóstico diario de una ciudad o punto."""
 
     location: str = Field(description="Ciudad o punto resuelto por el proveedor")
     days: list[DailyForecast] = Field(
         description="Días de pronóstico, del más cercano al más lejano"
+    )
+
+
+class HourlyResponse(BaseModel):
+    """Pronóstico horario de una ciudad o punto."""
+
+    location: str = Field(description="Ciudad o punto resuelto por el proveedor")
+    hours: list[HourlyForecast] = Field(
+        description="Horas de pronóstico, desde la hora actual hacia adelante"
     )
 
 

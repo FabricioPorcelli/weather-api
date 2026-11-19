@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379/0"
     cache_ttl_seconds: int = 43200  # 12 horas para el clima actual
     forecast_cache_ttl_seconds: int = 3600  # 1 hora para el pronóstico
+    hourly_cache_ttl_seconds: int = 1800  # 30 min para el pronóstico horario
     history_cache_ttl_seconds: int = 604800  # 7 días para el histórico inmutable
     weather_api_base_url: str = (
         "https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/timeline"
